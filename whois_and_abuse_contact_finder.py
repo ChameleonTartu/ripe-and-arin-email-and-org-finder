@@ -1,20 +1,31 @@
+#!/usr/bin/python3
+
 import pandas as pd
 import socket
 import json
 import urllib.request
-from pprint import pprint
+import logging
+import sys
 
 
-def read_xlsx(filename, sheet_name='INVESTIGATION'):
+# IO to XLSX file
+def read_xlsx(filename, sheet_name):
     data = pd.read_excel(filename, sheet_name=sheet_name)
     data = data.reset_index(drop=True)
     return data
 
+def write_xlsx(data, filename, sheet_name):
+    writer = pd.ExcelWriter(filename, engine='xlsxwriter')
+    data.to_excel(writer, sheet_name=sheet_name, index=False)
+    writer.save()
+    return
+
+# Processing of URLs
 def parse_url(url):
-    if url.startswith("http://"):
-        url = url[7:] 
-    if url.startswith("https://"):
-        url = url[8:]
+    sep_index = url.find("://")
+    if sep_index != -1:
+        url = url[sep_index + 3:] 
+    
     slash_pos = url.find("/")
     if slash_pos != -1:
         url = url[:slash_pos]
@@ -37,9 +48,8 @@ def extract_metadata(ip):
     metadata = None
     try:
         metadata = json.loads(urllib.request.urlopen(url).read())
-        # pprint(metadata)
     except Exception as e:
-        print("Something failed", e)
+        logging.exception("IP lookup has failed.", e)
 
     email = extract_email(metadata)
     org = extract_org(metadata)
@@ -51,9 +61,9 @@ def extract_org(metadata):
         return ""
     
     org = ""
-    for object in metadata['objects']['object']:
-        if object['type'] == 'inetnum' and 'resource-holder' in object and 'name' in object['resource-holder']:
-            abuse_contact = object['resource-holder']
+    for obj in metadata['objects']['object']:
+        if obj['type'] == 'inetnum' and 'resource-holder' in obj and 'name' in obj['resource-holder']:
+            abuse_contact = obj['resource-holder']
             org = abuse_contact['name']
             break
     return org
@@ -63,14 +73,18 @@ def extract_email(metadata):
         return ""
     
     email = ""
-    for object in metadata['objects']['object']:
-        if object['type'] == 'inetnum' and 'abuse-contact' in object and 'email' in object['abuse-contact']:
-            abuse_contact = object['abuse-contact']
+    for obj in metadata['objects']['object']:
+        if obj['type'] == 'inetnum' and 'abuse-contact' in obj and 'email' in obj['abuse-contact']:
+            abuse_contact = obj['abuse-contact']
             email = abuse_contact['email']
     return email
     
 def update_table(data):
-    VIDEO_URL, EMAILS, ORGANIZATION = 'Video URL', 'Abuse contact', 'Responsible Org'
+    VIDEO_URL, EMAILS, ORGANIZATION, IP = 'Video URL', 'Abuse contact', 'Responsible Org', 'DNS IP'
+    if IP in data:
+        data.drop([IP], inplace=True, axis=1)
+    data[IP] = ""
+    
     df = pd.DataFrame(columns=data.columns)
     for index, row in data.iterrows():
         url_for_lookup = parse_url(row[VIDEO_URL])
@@ -80,17 +94,21 @@ def update_table(data):
         print(org, email)
         row[EMAILS] = email
         row[ORGANIZATION] = org
+        row[IP] = ip
         df.loc[index + 1] = row
     return df
 
-def write_xlsx(data, filename, sheet_name='INVESTIGATION'):
-    writer = pd.ExcelWriter(filename, engine='xlsxwriter')
-    data.to_excel(writer, sheet_name=sheet_name, index=False)
-    writer.save()
-    return
 
 if __name__ == '__main__':
     filename = 'myworkbook.xlsx'
-    data = read_xlsx(filename)
+    if len(sys.argv) > 1:
+        filename = sys.argv[1]
+        
+    sheet_name = 'INVESTIGATION'
+    if len(sys.argv) > 2:
+        sheet_name = sys.argv[2]
+    
+    data = read_xlsx(filename, sheet_name)
     data = update_table(data)
-    write_xlsx(data, filename)
+    write_xlsx(data, filename, sheet_name)
+
