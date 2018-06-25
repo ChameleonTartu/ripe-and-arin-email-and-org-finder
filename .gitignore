@@ -1,0 +1,4 @@
+*.xlsx
+.pydevproject
+.project
+jw/
