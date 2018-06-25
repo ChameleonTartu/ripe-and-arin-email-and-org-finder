@@ -3,10 +3,10 @@
 import pandas as pd
 import socket
 import json
-import urllib.request
+from urllib import request
 import logging
 import sys
-
+from _curses import meta
 
 # IO to XLSX file
 def read_xlsx(filename, sheet_name):
@@ -29,6 +29,10 @@ def parse_url(url):
     slash_pos = url.find("/")
     if slash_pos != -1:
         url = url[:slash_pos]
+    
+    port_pos = url.find(":")
+    if port_pos != -1:
+        url = url[:port_pos]
     return url
 
 def nslookup(host):
@@ -38,47 +42,135 @@ def nslookup(host):
         return host
     return dns
 
-def extract_metadata(ip):
-    RIPE_UI_URL = "https://apps.db.ripe.net/db-web-ui/api/whois/search?abuse-contact=true&flags=B&ignore404=true&managed-attributes=true&resource-holder=true&query-string="
-    SOURCE_APP_ID = "sourceapp=investigation007"
+class WhoisLookup(object):
+    
+    @staticmethod
+    def extract_metadata(ip):
+        print("IP {0}".format(ip))
+        
+        org_ripe, email_ripe = WhoisLookup._extract_metadata_for_ripe(ip)
+        org_arin, email_arin = WhoisLookup._extract_metadata_for_arin(ip)
+        
+        print("RIPE: {0}, {1}".format(org_ripe, email_ripe))
+        print("ARIN: {0}, {1}".format(org_arin, email_arin))
+        
+        org, email = WhoisLookup.__org_and_email_resolver((org_ripe, email_ripe), (org_arin, email_arin))
+        return org, email
+    
+    @staticmethod
+    def __org_and_email_resolver(ripe, arin):
+        if ripe[1] != '':
+            return ripe
+        return arin
+    
+    @staticmethod
+    def _extract_metadata_for_arin(ip):
+        metadata = None
+        try:
+            ARIN_URL = "http://whois.arin.net/rest/ip/" + ip
+            headers = {"Accept": "application/json"}
+            req = request.Request(ARIN_URL, headers=headers)
+            metadata = json.loads(request.urlopen(req).read().decode())
+        except Exception as e:
+            logging.exception("IP lookup in ARIN DB has failed.", e)
 
-    print("IP {0}".format(ip))
-
-    url = "&".join([RIPE_UI_URL + ip, SOURCE_APP_ID])
-    metadata = None
-    try:
-        metadata = json.loads(urllib.request.urlopen(url).read())
-    except Exception as e:
-        logging.exception("IP lookup has failed.", e)
-
-    email = extract_email(metadata)
-    org = extract_org(metadata)
+        org = WhoisLookup.__extract_org_for_arin(metadata)
+        email = WhoisLookup.__extract_email_for_arin(metadata)
+        return org, email
     
-    return org, email
-
-def extract_org(metadata):
-    if metadata is None:
-        return ""
+    @staticmethod
+    def __extract_org_for_arin(metadata):
+        if metadata is None:
+            return ""
+        
+        org = ""
+        if 'net' in metadata and 'orgRef' in metadata['net'] and '@name' in metadata['net']['orgRef']:
+            org = metadata['net']['orgRef']['@name']
+        return org
     
-    org = ""
-    for obj in metadata['objects']['object']:
-        if obj['type'] == 'inetnum' and 'resource-holder' in obj and 'name' in obj['resource-holder']:
-            abuse_contact = obj['resource-holder']
-            org = abuse_contact['name']
-            break
-    return org
+    @staticmethod
+    def __extract_email_for_arin(metadata):
+        if metadata is None:
+            return ""
+        
+        email = ""
+        if 'net' in metadata and 'parentNetRef' in metadata['net'] and '@handle' in metadata['net']['parentNetRef']:
+            handle = metadata['net']['parentNetRef']['@handle']
+            try:
+                url = "https://whois.arin.net/rest/net/{0}/org/pocs".format(handle)
+                headers = {"Accept": "application/json"}
+                req = request.Request(url, headers=headers)
+                metadata = json.loads(request.urlopen(req).read().decode())
+                
+                if 'pocs' in metadata and 'pocLinkRef' in metadata['pocs']:
+                    abuse_contact_url = None
+                    for poc in metadata['pocs']['pocLinkRef']:
+                        if '@description' in poc and '@handle' in poc and poc['@description'] == 'Abuse':
+                            handle = poc['@handle']
+                            abuse_contact_url = "https://whois.arin.net/rest/poc/{0}".format(handle)
+                            print("Abuse contact url", abuse_contact_url)
+                            break
+                    email = WhoisLookup.__extract_email_for_arin_from_abuse_url(abuse_contact_url)
+            except Exception as e:
+                logging.exception("Extraction email for ARIN has failed", e)
+            
+        return email
     
-def extract_email(metadata):
-    if metadata is None:
-        return ""
+    @staticmethod
+    def __extract_email_for_arin_from_abuse_url(abuse_contact_url):
+        org = ""
+        try:
+            headers = {'Accept': 'application/json'}
+            req = request.Request(abuse_contact_url, headers=headers)
+            metadata = json.loads(request.urlopen(req).read().decode())
+            if 'poc' in metadata and 'emails' in metadata['poc'] and \
+               'email' in metadata['poc']['emails'] and '$' in metadata['poc']['emails']['email']:
+                org = metadata['poc']['emails']['email']['$']
+        except Exception as e:
+            logging.exception("Extraction abuse contact from abuse contact URL has failed", e)
+        return org
     
-    email = ""
-    for obj in metadata['objects']['object']:
-        if obj['type'] == 'inetnum' and 'abuse-contact' in obj and 'email' in obj['abuse-contact']:
-            abuse_contact = obj['abuse-contact']
-            email = abuse_contact['email']
-    return email
+    @staticmethod
+    def _extract_metadata_for_ripe(ip):
+        RIPE_UI_URL = "https://apps.db.ripe.net/db-web-ui/api/whois/search?abuse-contact=true&flags=B&ignore404=true&managed-attributes=true&resource-holder=true&query-string="
+        SOURCE_APP_ID = "sourceapp=investigation007"
+        
+        url = "&".join([RIPE_UI_URL + ip, SOURCE_APP_ID])
+        metadata = None
+        try:
+            metadata = json.loads(request.urlopen(url).read())
+        except Exception as e:
+            logging.exception("IP lookup in RIPE DB has failed.", e)
     
+        org = WhoisLookup.__extract_org_for_ripe(metadata)
+        email = WhoisLookup.__extract_email_for_ripe(metadata)
+        return org, email
+    
+    @staticmethod
+    def __extract_org_for_ripe(metadata):
+        if metadata is None:
+            return ""
+        
+        org = ""
+        for obj in metadata['objects']['object']:
+            if obj['type'] == 'inetnum' and 'resource-holder' in obj and 'name' in obj['resource-holder']:
+                abuse_contact = obj['resource-holder']
+                org = abuse_contact['name']
+                break
+        return org
+        
+    @staticmethod
+    def __extract_email_for_ripe(metadata):
+        if metadata is None:
+            return ""
+        
+        email = ""
+        for obj in metadata['objects']['object']:
+            if obj['type'] == 'inetnum' and 'abuse-contact' in obj and 'email' in obj['abuse-contact']:
+                abuse_contact = obj['abuse-contact']
+                email = abuse_contact['email']
+        return email
+        
 def update_table(data):
     VIDEO_URL, EMAILS, ORGANIZATION, IP = 'Video URL', 'Abuse contact', 'Responsible Org', 'DNS IP'
     if IP in data:
@@ -89,9 +181,8 @@ def update_table(data):
     for index, row in data.iterrows():
         url_for_lookup = parse_url(row[VIDEO_URL])
         ip = nslookup(url_for_lookup)        
-        org, email = extract_metadata(ip)
+        org, email = WhoisLookup.extract_metadata(ip)
 
-        print(org, email)
         row[EMAILS] = email
         row[ORGANIZATION] = org
         row[IP] = ip
