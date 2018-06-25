@@ -27,4 +27,4 @@ By default, `myworkbook.xlsx` is the name of the file and `INVESTIGATION` is the
 
 ## Recommendations
 
-Based on my personal experience it is always better to create virtualenvironment to run different small scripts. Therefore, in documentation I provide `requirements.txt` file with libraries required. The script was tested for `Python3.6` and should work for `Python3.6+`. If it is not the case, feel free to create an issue to this repository.
+Based on my personal experience it is always better to create virtual environment to run different small scripts. Therefore, in the documentation I provide `requirements.txt` file with required dependencies. To install them you need to activate virtual environment and run `pip install -r requirements.txt`. The script was tested for `Python3.6` and should work for `Python3.6+`. If it is not the case, feel free to create an issue to this repository.
