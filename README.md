@@ -1,8 +1,8 @@
-# RIPE abuse contact email and organisation name finder
+# RIPE and ARIN abuse contact email and organisation name finder
 
-This script allows to find DNS IP from any URL (so called `NSLOOKUP`) and based on retrieved IP find abuse contact and organisation name in RIPE database.
+This script allows to find DNS IP from any URL (so called `NSLOOKUP`) and based on retrieved IP find abuse contact and organisation name in RIPE and ARIN databases.
 
-NOTE: Please, take into account that if you need to use this script you will need to change string `investigation007` to some unique string that will be associated with your application.
+NOTE: Please, take into account that if you need to use this script to do a lookup at RIPE DB, you will need to change string `investigation007` to some unique string that will be associated with your application.
 
 ## Format of the .xlsx file to run the script on
 
