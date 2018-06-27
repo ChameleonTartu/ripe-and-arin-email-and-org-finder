@@ -74,61 +74,58 @@ class WhoisLookup(object):
         except Exception as e:
             logging.exception("IP lookup in ARIN DB has failed.", e)
 
-        org = WhoisLookup.__extract_org_for_arin(metadata)
-        email = WhoisLookup.__extract_email_for_arin(metadata)
-        return org, email
-    
-    @staticmethod
-    def __extract_org_for_arin(metadata):
-        if metadata is None:
-            return ""
+        org, email = None, None
+        try:
+            if 'net' in metadata and 'parentNetRef' in metadata['net'] and '@handle' in metadata['net']['parentNetRef']:
+                handle = metadata['net']['parentNetRef']['@handle']
+                try:
+                    url = "https://whois.arin.net/rest/net/{0}/org/pocs".format(handle)
+                    headers = {"Accept": "application/json"}
+                    req = request.Request(url, headers=headers)
+                    metadata = json.loads(request.urlopen(req).read().decode())
+                    
+                    if 'pocs' in metadata and 'pocLinkRef' in metadata['pocs']:
+                        abuse_contact_url = None
+                        for poc in metadata['pocs']['pocLinkRef']:
+                            if '@description' in poc and '@handle' in poc and poc['@description'] == 'Abuse':
+                                handle = poc['@handle']
+                                abuse_contact_url = "https://whois.arin.net/rest/poc/{0}".format(handle)
+                        
+                        org = WhoisLookup.__extract_org_for_arin(abuse_contact_url)
+                        email = WhoisLookup.__extract_email_for_arin(abuse_contact_url)
+                except Exception as e:
+                    raise e
+        except Exception as e:
+            logging.exception("Extraction org and email for ARIN has failed", e)
         
+        return org, email
+
+    @staticmethod
+    def __extract_org_for_arin(abuse_contact_url):
         org = ""
-        if 'net' in metadata and 'orgRef' in metadata['net'] and '@name' in metadata['net']['orgRef']:
-            org = metadata['net']['orgRef']['@name']
+        try:
+            headers = {'Accept': 'application/json'}
+            req = request.Request(abuse_contact_url, headers=headers)
+            metadata = json.loads(request.urlopen(req).read().decode())
+            if 'poc' in metadata and 'companyName' in metadata['poc'] and '$' in metadata['poc']['companyName']:
+                org = metadata['poc']['companyName']['$']
+        except Exception as e:
+            logging.exception("Extraction organization name from abuse contact URL has failed", e)
         return org
     
     @staticmethod
-    def __extract_email_for_arin(metadata):
-        if metadata is None:
-            return ""
-        
+    def __extract_email_for_arin(abuse_contact_url):
         email = ""
-        if 'net' in metadata and 'parentNetRef' in metadata['net'] and '@handle' in metadata['net']['parentNetRef']:
-            handle = metadata['net']['parentNetRef']['@handle']
-            try:
-                url = "https://whois.arin.net/rest/net/{0}/org/pocs".format(handle)
-                headers = {"Accept": "application/json"}
-                req = request.Request(url, headers=headers)
-                metadata = json.loads(request.urlopen(req).read().decode())
-                
-                if 'pocs' in metadata and 'pocLinkRef' in metadata['pocs']:
-                    abuse_contact_url = None
-                    for poc in metadata['pocs']['pocLinkRef']:
-                        if '@description' in poc and '@handle' in poc and poc['@description'] == 'Abuse':
-                            handle = poc['@handle']
-                            abuse_contact_url = "https://whois.arin.net/rest/poc/{0}".format(handle)
-                            print("Abuse contact url", abuse_contact_url)
-                            break
-                    email = WhoisLookup.__extract_email_for_arin_from_abuse_url(abuse_contact_url)
-            except Exception as e:
-                logging.exception("Extraction email for ARIN has failed", e)
-            
-        return email
-    
-    @staticmethod
-    def __extract_email_for_arin_from_abuse_url(abuse_contact_url):
-        org = ""
         try:
             headers = {'Accept': 'application/json'}
             req = request.Request(abuse_contact_url, headers=headers)
             metadata = json.loads(request.urlopen(req).read().decode())
             if 'poc' in metadata and 'emails' in metadata['poc'] and \
                'email' in metadata['poc']['emails'] and '$' in metadata['poc']['emails']['email']:
-                org = metadata['poc']['emails']['email']['$']
+                email = metadata['poc']['emails']['email']['$']
         except Exception as e:
-            logging.exception("Extraction abuse contact from abuse contact URL has failed", e)
-        return org
+            logging.exception("Extraction email from abuse contact URL has failed", e)
+        return email
     
     @staticmethod
     def _extract_metadata_for_ripe(ip):
